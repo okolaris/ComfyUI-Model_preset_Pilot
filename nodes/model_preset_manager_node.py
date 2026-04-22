@@ -25,22 +25,10 @@ def _get_sampler_choices():
     try:
         import comfy.samplers as comfy_samplers
         
-        # Get the global registry of registered samplers
-        samplers = getattr(comfy_samplers, "SAMPLERS", [])
+        samplers = getattr(comfy_samplers.KSampler, "SAMPLERS", comfy_samplers.SAMPLER_NAMES)
         
-        # Remove None/empty values and duplicates
-        samplers = [s for s in samplers if s]
-        samplers = sorted(set(samplers))
-        
-        # Optional: verify samplers are actually available in the lookup
-        registered = getattr(comfy_samplers, "SAMPLER_LOOKUP", {})
-        valid_samplers = [s for s in samplers if s in registered and callable(registered.get(s))]
-        
-        if valid_samplers:
-            print(f"[ModelPresetPilot] Found {len(valid_samplers)} valid samplers from comfy.samplers")
-            return valid_samplers
-        elif samplers:
-            print(f"[ModelPresetPilot] Found {len(samplers)} samplers from comfy.samplers (not all verified)")
+        if samplers:
+            print(f"[ModelPresetPilot] Found {len(samplers)} samplers from comfy.samplers")
             return samplers
         else:
             print("[ModelPresetPilot] No samplers found in comfy.samplers, using fallback")
@@ -55,12 +43,7 @@ def _get_scheduler_choices():
     try:
         import comfy.samplers as comfy_samplers
         
-        # Get the global registry of registered schedulers
-        schedulers = getattr(comfy_samplers, "SCHEDULERS", [])
-        
-        # Remove None/empty values and duplicates
-        schedulers = [s for s in schedulers if s]
-        schedulers = sorted(set(schedulers))
+        schedulers = getattr(comfy_samplers.KSampler, "SCHEDULERS", comfy_samplers.SCHEDULER_NAMES)
         
         if schedulers:
             print(f"[ModelPresetPilot] Found {len(schedulers)} schedulers from comfy.samplers")
@@ -72,6 +55,26 @@ def _get_scheduler_choices():
     except Exception as e:
         print(f"[ModelPresetPilot] Error detecting schedulers: {e}")
         return ["normal", "karras", "exponential", "sgm_uniform"]
+
+# Pre-compute sampler/scheduler choices at module load time for RETURN_TYPES
+_SAMPLER_CHOICES = _get_sampler_choices()
+_SCHEDULER_CHOICES = _get_scheduler_choices()
+
+
+def _get_checkpoint_choices():
+    """Get available checkpoints from ComfyUI folder_paths"""
+    try:
+        import folder_paths
+        checkpoints = folder_paths.get_filename_list("checkpoints")
+        if checkpoints:
+            return checkpoints
+        return ["none"]
+    except Exception as e:
+        print(f"[ModelPresetPilot] Error detecting checkpoints: {e}")
+        return ["none"]
+
+
+_CHOICES_CHECKPOINT = _get_checkpoint_choices()
 
 # Data directory for default assets and templates
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
@@ -260,13 +263,15 @@ class ModelPresetManager:
         "STRING",   # preset data as string
         "IMAGE",    # preview image
         "STRING",   # status message
-        "STRING",   # sampler_name for KSampler
-        "STRING",   # scheduler for KSampler
+        _SAMPLER_CHOICES,   # sampler_name for KSampler (COMBO)
+        _SCHEDULER_CHOICES,   # scheduler for KSampler (COMBO)
         "INT",      # steps for KSampler
         "FLOAT",    # cfg for KSampler
         "INT",      # width for KSampler
         "INT",      # height for KSampler
         "INT",      # seed for KSampler
+        _CHOICES_CHECKPOINT,  # ckpt_name for Load Checkpoint (COMBO)
+        "INT",      # stop_at_clip_layer for CLIP Skip (supports negative)
     )
     RETURN_NAMES = (
         "preset_data",
@@ -278,7 +283,9 @@ class ModelPresetManager:
         "cfg",
         "width",
         "height",
-        "seed"
+        "seed",
+        "ckpt_name",
+        "stop_at_clip_layer",
     )
     FUNCTION = "run"
     CATEGORY = "🤖 Model Preset Pilot"
@@ -297,24 +304,23 @@ class ModelPresetManager:
                     # Find the actual model_id from the model_name
                     from .storage_manager import _load_model_database
                     db = _load_model_database()
-                    
-                    # Find the model_id that matches this model_name
-                    actual_model_id = None
+
+                    found_checkpoint_name = ""
                     for mid, model_entry in db.get("models", {}).items():
                         checkpoint_name = model_entry.get("checkpoint_name", "")
                         if checkpoint_name:
-                            # Extract filename without path and extension
                             import os
                             base_name = os.path.splitext(os.path.basename(checkpoint_name))[0]
                             if base_name == model_display_name:
                                 actual_model_id = mid
+                                found_checkpoint_name = checkpoint_name
                                 break
                     
                     if not actual_model_id:
                         print(f"Warning: Could not find model ID for {model_display_name}")
                         default_image = _get_default_preview_image()
                         return ("Error: Model not found", default_image, "❌ Model not found",
-                               sampler_name, scheduler, steps, cfg, width, height, seed)
+                               sampler_name, scheduler, steps, cfg, width, height, seed, "", 0)
                     
                     # Load the preset data
                     preset_data = get_preset(actual_model_id, preset_id)
@@ -323,7 +329,7 @@ class ModelPresetManager:
                         print(f"Warning: Could not load preset {preset_id} for model {actual_model_id}")
                         default_image = _get_default_preview_image()
                         return ("Error: Preset not found", default_image, "❌ Preset not found",
-                               sampler_name, scheduler, steps, cfg, width, height, seed)
+                               sampler_name, scheduler, steps, cfg, width, height, seed, "", 0)
                     
                     print(f"Loaded preset '{preset_id}' for model '{model_display_name}'")
                     print(f"Preset data: {preset_data}")
@@ -355,10 +361,11 @@ class ModelPresetManager:
                     loaded_width = preset_data.get("width", width)
                     loaded_height = preset_data.get("height", height)
                     loaded_seed = preset_data.get("seed", seed)
+                    loaded_clip_skip = preset_data.get("clip_skip", clip_skip)
                     
                     return (preset_json, preview_image, f"✅ Loaded preset: {preset_id}",
                            loaded_sampler, loaded_scheduler, loaded_steps, loaded_cfg, 
-                           loaded_width, loaded_height, loaded_seed)
+                           loaded_width, loaded_height, loaded_seed, found_checkpoint_name, loaded_clip_skip)
                             
             except Exception as e:
                 print(f"Warning: Could not load preset '{preset_name}': {e}")
@@ -378,7 +385,7 @@ class ModelPresetManager:
                     print(f"Warning: Could not display error image: {display_e}")
                 
                 return ("Error loading preset", default_image, f"❌ Error: {str(e)}",
-                       sampler_name, scheduler, steps, cfg, width, height, seed)
+                       sampler_name, scheduler, steps, cfg, width, height, seed, "", 0)
         
         # Handle preset saving
         if save_preset and model_name:
@@ -442,14 +449,14 @@ class ModelPresetManager:
                 import json
                 default_image = _get_default_preview_image()
                 return (json.dumps(preset_data, indent=2), default_image, status_msg, 
-                       sampler_name, scheduler, steps, cfg, width, height, seed)
+                       sampler_name, scheduler, steps, cfg, width, height, seed, model_name, clip_skip)
                 
             except Exception as e:
                 error_msg = f"❌ Error saving preset: {str(e)}"
                 print(error_msg)
                 default_image = _get_default_preview_image()
                 return ("Error saving preset", default_image, error_msg, 
-                       sampler_name, scheduler, steps, cfg, width, height, seed)
+                       sampler_name, scheduler, steps, cfg, width, height, seed, "", 0)
         
         # No preset selected and not saving
         print("No preset selected and not saving")
@@ -468,7 +475,7 @@ class ModelPresetManager:
             print(f"Warning: Could not display default image: {display_e}")
         
         return ("No preset data", default_image, "📋 Select a preset to load, or 'new_preset' + Save Preset to create",
-               sampler_name, scheduler, steps, cfg, width, height, seed)
+               sampler_name, scheduler, steps, cfg, width, height, seed, model_name if model_name else "", clip_skip)
 
 # Node mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {

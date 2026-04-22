@@ -17,22 +17,10 @@ def _get_sampler_choices():
     try:
         import comfy.samplers as comfy_samplers
         
-        # Get the global registry of registered samplers
-        samplers = getattr(comfy_samplers, "SAMPLERS", [])
+        samplers = getattr(comfy_samplers.KSampler, "SAMPLERS", comfy_samplers.SAMPLER_NAMES)
         
-        # Remove None/empty values and duplicates
-        samplers = [s for s in samplers if s]
-        samplers = sorted(set(samplers))
-        
-        # Optional: verify samplers are actually available in the lookup
-        registered = getattr(comfy_samplers, "SAMPLER_LOOKUP", {})
-        valid_samplers = [s for s in samplers if s in registered and callable(registered.get(s))]
-        
-        if valid_samplers:
-            print(f"[PresetKSampler] Found {len(valid_samplers)} valid samplers from comfy.samplers")
-            return valid_samplers
-        elif samplers:
-            print(f"[PresetKSampler] Found {len(samplers)} samplers from comfy.samplers (not all verified)")
+        if samplers:
+            print(f"[PresetKSampler] Found {len(samplers)} samplers from comfy.samplers")
             return samplers
         else:
             print("[PresetKSampler] No samplers found in comfy.samplers, using fallback")
@@ -47,12 +35,7 @@ def _get_scheduler_choices():
     try:
         import comfy.samplers as comfy_samplers
         
-        # Get the global registry of registered schedulers
-        schedulers = getattr(comfy.samplers, "SCHEDULERS", [])
-        
-        # Remove None/empty values and duplicates
-        schedulers = [s for s in schedulers if s]
-        schedulers = sorted(set(schedulers))
+        schedulers = getattr(comfy_samplers.KSampler, "SCHEDULERS", comfy_samplers.SCHEDULER_NAMES)
         
         if schedulers:
             print(f"[PresetKSampler] Found {len(schedulers)} schedulers from comfy.samplers")

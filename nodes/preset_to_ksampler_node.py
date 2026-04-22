@@ -17,22 +17,10 @@ def _get_sampler_choices():
     try:
         import comfy.samplers as comfy_samplers
         
-        # Get the global registry of registered samplers
-        samplers = getattr(comfy_samplers, "SAMPLERS", [])
+        samplers = getattr(comfy_samplers.KSampler, "SAMPLERS", comfy_samplers.SAMPLER_NAMES)
         
-        # Remove None/empty values and duplicates
-        samplers = [s for s in samplers if s]
-        samplers = sorted(set(samplers))
-        
-        # Optional: verify samplers are actually available in the lookup
-        registered = getattr(comfy_samplers, "SAMPLER_LOOKUP", {})
-        valid_samplers = [s for s in samplers if s in registered and callable(registered.get(s))]
-        
-        if valid_samplers:
-            print(f"[PresetToKSampler] Found {len(valid_samplers)} valid samplers from comfy.samplers")
-            return valid_samplers
-        elif samplers:
-            print(f"[PresetToKSampler] Found {len(samplers)} samplers from comfy.samplers (not all verified)")
+        if samplers:
+            print(f"[PresetToKSampler] Found {len(samplers)} samplers from comfy.samplers")
             return samplers
         else:
             print("[PresetToKSampler] No samplers found in comfy.samplers, using fallback")
@@ -47,12 +35,7 @@ def _get_scheduler_choices():
     try:
         import comfy.samplers as comfy_samplers
         
-        # Get the global registry of registered schedulers
-        schedulers = getattr(comfy.samplers, "SCHEDULERS", [])
-        
-        # Remove None/empty values and duplicates
-        schedulers = [s for s in schedulers if s]
-        schedulers = sorted(set(schedulers))
+        schedulers = getattr(comfy_samplers.KSampler, "SCHEDULERS", comfy_samplers.SCHEDULER_NAMES)
         
         if schedulers:
             print(f"[PresetToKSampler] Found {len(schedulers)} schedulers from comfy.samplers")
@@ -64,6 +47,11 @@ def _get_scheduler_choices():
     except Exception as e:
         print(f"[PresetToKSampler] Error detecting schedulers: {e}")
         return ["normal", "karras", "exponential", "sgm_uniform"]
+
+# Pre-compute sampler/scheduler choices at module load time for RETURN_TYPES
+_SAMPLER_CHOICES = _get_sampler_choices()
+_SCHEDULER_CHOICES = _get_scheduler_choices()
+
 
 class PresetToKSampler:
     """
@@ -87,11 +75,11 @@ class PresetToKSampler:
         }
 
     RETURN_TYPES = (
-        "STRING",   # sampler_name
-        "STRING",   # scheduler
-        "INT",      # steps
-        "FLOAT",    # cfg
-        "INT",      # seed
+        _SAMPLER_CHOICES,
+        _SCHEDULER_CHOICES,
+        "INT",
+        "FLOAT",
+        "INT",
     )
     RETURN_NAMES = (
         "sampler_name",
